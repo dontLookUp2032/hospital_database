@@ -261,9 +261,31 @@ setInterval(() => {
 }, 100);
 
 const app = express();
+
+// Allow the GitHub Pages website to contact this backend
+app.use((req, res, next) => {
+  res.header(
+    'Access-Control-Allow-Origin',
+    'https://dontlookup2032.github.io'
+  );
+  res.header(
+    'Access-Control-Allow-Methods',
+    'GET, POST, OPTIONS'
+  );
+  res.header(
+    'Access-Control-Allow-Headers',
+    'Content-Type'
+  );
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
-
 app.get('/api/metrics', (req, res) => {
   const events = live.events.splice(0).slice(-40);
   res.json({
