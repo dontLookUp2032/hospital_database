@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NUMA bottleneck simulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #eef2ee;
+    --panel: #f9fbf8;
+    --ink: #14232e;
+    --muted: #5a6a72;
+    --line: #c9d3cd;
+    --local: #0e7c7b;
+    --remote: #d5432f;
+    --amber: #b97d00;
+    --focus: #1b4dd8;
+    --display: "Bricolage Grotesque", "Trebuchet MS", system-ui, sans-serif;
+    --body: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-padding-top: 16px; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--body); font-size: 15px; line-height: 1.5;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 20px 56px; }
+  :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+  header { display: flex; flex-wrap: wrap; gap: 16px 32px; align-items: flex-end; justify-content: space-between; }
+  h1 { font-family: var(--display); font-weight: 700; font-size: clamp(28px, 4vw, 40px); line-height: 1.05; margin: 0 0 6px; letter-spacing: -0.01em; }
+  header p { margin: 0; color: var(--muted); max-width: 52ch; }
+
+  /* Mode switch: the main control of the demo */
+  .switch { display: inline-flex; border: 2px solid var(--ink); border-radius: 999px; padding: 4px; background: var(--panel); }
+  .switch button {
+    font: 600 15px var(--body); border: 0; background: transparent; color: var(--ink);
+    padding: 10px 22px; border-radius: 999px; cursor: pointer; min-height: 44px;
+  }
+  .switch button[aria-checked="true"].is-broken { background: var(--remote); color: #fff; }
+  .switch button[aria-checked="true"].is-fixed { background: var(--local); color: #fff; }
+
+  .status { margin: 20px 0 12px; font-size: 17px; min-height: 52px; max-width: 80ch; }
+  .status strong { font-weight: 600; }
+  .offline { display: none; background: #fbe4df; border: 1px solid var(--remote); padding: 10px 14px; border-radius: 6px; margin: 16px 0 0; }
+
+  /* Hero: the two nodes */
+  .stage { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px; }
+  #hero { width: 100%; height: 330px; display: block; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 22px; padding: 6px 12px 8px; color: var(--muted); font-size: 13px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: baseline; }
+
+  /* Key numbers */
+  .kpis { display: grid; grid-template-columns: repeat(5, 1fr); margin: 22px 0 8px; border-top: 2px solid var(--ink); }
+  .kpi { padding: 14px 16px 10px 0; }
+  .kpi + .kpi { padding-left: 16px; border-left: 1px solid var(--line); }
+  .kpi .v { font-family: var(--display); font-weight: 700; font-size: clamp(26px, 3.2vw, 36px); line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .kpi .v small { font-size: 0.5em; font-weight: 500; color: var(--muted); margin-left: 3px; }
+  .kpi .l { font-weight: 600; margin-top: 2px; }
+  .kpi .d { color: var(--muted); font-size: 13px; }
+
+  .grid2 { display: grid; grid-template-columns: 1.6fr 1fr; gap: 28px; margin-top: 28px; }
+  h2 { font-family: var(--display); font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 12px; font-size: 14px; }
+  .chartbox { position: relative; height: 270px; }
+
+  /* Controls */
+  .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px 32px; margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--line); }
+  .ctl label { display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 4px; }
+  .ctl output { font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 500; }
+  .ctl input[type=range] { width: 100%; accent-color: var(--ink); }
+  .ctl .hint { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
+  .btn { font: 600 14px var(--body); border: 2px solid var(--ink); background: transparent; color: var(--ink); padding: 9px 16px; border-radius: 8px; cursor: pointer; min-height: 44px; }
+  .btn.primary { background: var(--ink); color: #fff; }
+  .btn:disabled { opacity: .5; cursor: progress; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+  /* Benchmark */
+  table { border-collapse: collapse; width: 100%; margin-top: 12px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  th { font-weight: 600; border-bottom: 2px solid var(--ink); }
+  td.good { color: var(--local); font-weight: 600; }
+  .note { color: var(--muted); font-size: 13px; max-width: 80ch; }
+  .tablewrap { overflow-x: auto; }
+
+  @media (max-width: 860px) {
+    .kpis { grid-template-columns: repeat(2, 1fr); }
+    .kpi:nth-child(odd) { padding-left: 0; border-left: 0; }
+    .kpi { border-bottom: 1px solid var(--line); }
+    .grid2 { grid-template-columns: 1fr; }
+    #hero { height: 300px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>NUMA bottleneck simulator</h1>
+      <p>A hospital database running on two memory nodes. Switch the routing and watch what happens to emergency and ICU queries.</p>
+    </div>
+    <div class="switch" role="radiogroup" aria-label="Query routing mode">
+      <button type="button" role="radio" class="is-broken" id="modeBroken" aria-checked="true">Broken: random routing</button>
+      <button type="button" role="radio" class="is-fixed" id="modeFixed" aria-checked="false">Fixed: route to data owner</button>
+    </div>
+  </header>
+
+  <div class="offline" id="offline">Can't reach the simulator server. Start it with <b>npm start</b> and reload this page.</div>
+
+  <p class="status" id="status">Connecting to the simulator…</p>
+
+  <section class="stage" aria-label="Live view of the two NUMA nodes">
+    <canvas id="hero" role="img" aria-label="Animated diagram: queries travelling from worker threads to memory on two nodes. Red paths cross the interconnect."></canvas>
+    <div class="legend">
+      <span><i style="background:var(--local)"></i>Local access: worker and data on the same node</span>
+      <span><i style="background:var(--remote)"></i>Remote access: crosses the interconnect, 3x the cost</span>
+      <span>Larger dots are critical queries (ER, ICU)</span>
+    </div>
+  </section>
+
+  <section class="kpis" aria-label="Live metrics (last 3 seconds)">
+    <div class="kpi"><div class="v" id="kLat">-</div><div class="l">Average latency</div><div class="d">Wait in queue plus run time</div></div>
+    <div class="kpi"><div class="v" id="kP95">-</div><div class="l">p95 latency</div><div class="d">Slowest 1 in 20 queries</div></div>
+    <div class="kpi"><div class="v" id="kLocal">-</div><div class="l">Local access</div><div class="d">Share of memory reads on the right node</div></div>
+    <div class="kpi"><div class="v" id="kTput">-</div><div class="l">Throughput</div><div class="d">Queries finished per second</div></div>
+    <div class="kpi"><div class="v" id="kTriage">-</div><div class="l">Triage queue delay</div><div class="d">Average wait of ER and ICU queries</div></div>
+  </section>
+
+  <div class="grid2">
+    <section>
+      <h2>Latency over time</h2>
+      <p class="sub">The line is red while Broken mode is active and teal while Fixed mode is active.</p>
+      <div class="chartbox"><canvas id="timeline" role="img" aria-label="Line chart of average latency, p95 latency and triage delay over time"></canvas></div>
+    </section>
+    <section>
+      <h2>Broken vs fixed</h2>
+      <p class="sub" id="cmpSub">Spend some time in each mode to fill this in.</p>
+      <div class="chartbox"><canvas id="compare" role="img" aria-label="Bar chart comparing latency in Broken and Fixed modes"></canvas></div>
+    </section>
+  </div>
+
+  <section class="controls" aria-label="Simulation settings">
+    <div class="ctl">
+      <label for="rate">Query rate <output id="rateOut">1200 / s</output></label>
+      <input type="range" id="rate" min="200" max="2200" step="100" value="1200">
+      <p class="hint">Push this up in Broken mode to see the queues blow up.</p>
+    </div>
+    <div class="ctl">
+      <label for="remote">Remote access cost <output id="remoteOut">300 ns (3.0x)</output></label>
+      <input type="range" id="remote" min="100" max="500" step="50" value="300">
+      <p class="hint">Local access stays at 100 ns.</p>
+    </div>
+    <div class="ctl">
+      <label for="prio" style="justify-content:flex-start;gap:10px">
+        <input type="checkbox" id="prio" checked style="width:20px;height:20px;accent-color:var(--ink)"> Critical queries go first
+      </label>
+      <p class="hint">ER and ICU queries skip ahead of OPD and Pediatrics in the queue.</p>
+    </div>
+    <div class="ctl row">
+      <button class="btn" id="reset" type="button">Reset the simulation</button>
+    </div>
+  </section>
+
+  <section style="margin-top:36px">
+    <h2>Run the experiment</h2>
+    <p class="sub">Runs both modes with the same settings for 60 simulated seconds, three times each, and averages the results. It finishes in a moment because it doesn't run in real time.</p>
+    <div class="row"><button class="btn primary" id="bench" type="button">Run the 60 s benchmark</button><span class="note" id="benchNote"></span></div>
+    <div class="tablewrap">
+      <table id="benchTable" hidden>
+        <thead><tr><th>Metric</th><th>Broken</th><th>Fixed</th><th>Change</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="note" id="benchFoot" hidden></p>
+  </section>
+
+  <p class="note" style="margin-top:32px">These numbers come from a simulated model with assumed latencies (100 ns local, 300 ns remote by default), not from measurements on real multi-socket hardware.</p>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const RED = '#d5432f', TEAL = '#0e7c7b', AMBER = '#b97d00', INK = '#14232e', GREY = '#7d8b92';
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+async function api(path, opts) { const r = await fetch(path, opts); if (!r.ok) throw new Error(r.status); return r.json(); }
+const post = (path, body) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+
+const fmtMs = (v) => (v < 10 ? v.toFixed(2) : v < 100 ? v.toFixed(1) : Math.round(v).toString());
+const unitHTML = (v, unit) => `${v}<small>${unit}</small>`;
+
+/* ---------------- state ---------------- */
+let last = null;      // last /api/metrics payload
+let hero = { particles: [] };
+
+/* ---------------- mode switch ---------------- */
+function setModeUI(mode) {
+  $('modeBroken').setAttribute('aria-checked', mode === 'broken');
+  $('modeFixed').setAttribute('aria-checked', mode === 'fixed');
+}
+async function chooseMode(mode) { setModeUI(mode); await post('/api/mode', { mode }); }
+$('modeBroken').onclick = () => chooseMode('broken');
+$('modeFixed').onclick = () => chooseMode('fixed');
+[$('modeBroken'), $('modeFixed')].forEach((b) => b.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { chooseMode(b === $('modeBroken') ? 'fixed' : 'broken'); (b === $('modeBroken') ? $('modeFixed') : $('modeBroken')).focus(); }
+}));
+
+/* ---------------- controls ---------------- */
+let cfgTimer;
+function pushCfg() {
+  clearTimeout(cfgTimer);
+  cfgTimer = setTimeout(() => post('/api/config', {
+    rate: +$('rate').value, remoteNs: +$('remote').value, priority: $('prio').checked,
+  }), 150);
+}
+$('rate').oninput = () => { $('rateOut').textContent = `${$('rate').value} / s`; pushCfg(); };
+$('remote').oninput = () => { $('remoteOut').textContent = `${$('remote').value} ns (${($('remote').value / 100).toFixed(1)}x)`; pushCfg(); };
+$('prio').onchange = pushCfg;
+$('reset').onclick = async () => {
+  await post('/api/reset'); setModeUI('broken');
+  timeline.data.labels = []; timeline.data.datasets.forEach((d) => (d.data = [])); timeline.update('none');
+  hero.particles = [];
+};
+
+/* ---------------- charts ---------------- */
+Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+Chart.defaults.color = '#5a6a72';
+
+let seriesModes = [];
+const timeline = new Chart($('timeline'), {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [
+      { label: 'Average latency', data: [], borderWidth: 3, pointRadius: 0, tension: 0.25, borderColor: TEAL,
+        segment: { borderColor: (c) => (seriesModes[c.p1DataIndex] === 'broken' ? RED : TEAL) } },
+      { label: 'p95 latency', data: [], borderWidth: 2, borderDash: [6, 4], pointRadius: 0, tension: 0.25, borderColor: GREY },
+      { label: 'Triage delay (ER, ICU)', data: [], borderWidth: 2, pointRadius: 0, tension: 0.25, borderColor: AMBER },
+    ],
+  },
+  options: {
+    animation: false, responsive: true, maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    scales: {
+      y: { beginAtZero: true, title: { display: true, text: 'milliseconds' }, grid: { color: '#dde4df' } },
+      x: { title: { display: true, text: 'seconds since reset' }, grid: { display: false }, ticks: { maxTicksLimit: 8 } },
+    },
+    plugins: { legend: { position: 'bottom', labels: { boxWidth: 14 } } },
+  },
+});
+
+const compare = new Chart($('compare'), {
+  type: 'bar',
+  data: {
+    labels: ['Average latency', 'p95 latency', 'Triage delay'],
+    datasets: [
+      { label: 'Broken', data: [0, 0, 0], backgroundColor: RED },
+      { label: 'Fixed', data: [0, 0, 0], backgroundColor: TEAL },
+    ],
+  },
+  options: {
+    animation: false, responsive: true, maintainAspectRatio: false,
+    scales: { y: { beginAtZero: true, title: { display: true, text: 'milliseconds' }, grid: { color: '#dde4df' } }, x: { grid: { display: false } } },
+    plugins: { legend: { position: 'bottom', labels: { boxWidth: 14 } } },
+  },
+});
+
+/* ---------------- hero canvas ---------------- */
+const cv = $('hero'), ctx = cv.getContext('2d');
+let W = 0, H = 0;
+function resize() {
+  const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  cv.width = r.width * dpr; cv.height = r.height * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); W = r.width; H = r.height;
+}
+window.addEventListener('resize', resize); resize();
+
+function geom() {
+  const nw = W * 0.37, y = 12, h = H - 24;
+  const nodes = [0, 1].map((i) => {
+    const x = i === 0 ? 8 : W - 8 - nw;
+    return {
+      x, y, w: nw, h,
+      cpu: { x: x + 14, y: y + 40, w: nw - 28, h: h * 0.3 },
+      mem: { x: x + 14, y: y + h - h * 0.34 - 12, w: nw - 28, h: h * 0.34 },
+    };
+  });
+  return nodes;
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+
+function spawn(events) {
+  const g = geom(), now = performance.now();
+  events.forEach((e, i) => {
+    const from = g[e.worker].cpu, to = g[e.home].mem;
+    const remote = e.worker !== e.home;
+    const jx = () => (Math.random() - 0.5) * (from.w * 0.7);
+    hero.particles.push({
+      x0: from.x + from.w / 2 + jx(), y0: from.y + from.h,
+      x1: to.x + to.w / 2 + jx(), y1: to.y,
+      t0: now + (i / Math.max(1, events.length)) * 450 + Math.random() * 60,
+      dur: remote ? 1000 : 380, remote, critical: e.critical,
+    });
+  });
+  if (hero.particles.length > 260) hero.particles.splice(0, hero.particles.length - 260);
+}
+
+const DEPT_LABEL = ['Emergency room, ICU', 'Outpatient, Pediatrics'];
+function drawHero(t) {
+  ctx.clearRect(0, 0, W, H);
+  const g = geom(), m = last ? last.live : null;
+  const remotePct = m ? m.remotePct : 0;
+
+  // interconnect
+  const cx = W / 2, ly = H / 2;
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = remotePct > 25 ? RED : '#9fb0a8';
+  ctx.globalAlpha = 0.25 + Math.min(0.75, remotePct / 80);
+  ctx.lineWidth = 2 + remotePct / 10;
+  ctx.beginPath(); ctx.moveTo(g[0].x + g[0].w + 6, ly); ctx.lineTo(g[1].x - 6, ly); ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = INK; ctx.textAlign = 'center'; ctx.font = '600 13px ' + getComputedStyle(document.body).fontFamily;
+  ctx.fillText('Interconnect', cx, ly - 16 - remotePct / 20);
+  ctx.fillStyle = remotePct > 25 ? RED : TEAL;
+  ctx.fillText(m ? `${Math.round(remotePct)}% of reads cross` : '', cx, ly + 26 + remotePct / 20);
+
+  // nodes
+  g.forEach((n, i) => {
+    ctx.fillStyle = '#fff'; ctx.strokeStyle = INK; ctx.lineWidth = 2;
+    roundRect(n.x, n.y, n.w, n.h, 10); ctx.fill(); ctx.stroke();
+
+    ctx.textAlign = 'left'; ctx.fillStyle = INK;
+    ctx.font = '700 17px ' + getComputedStyle(document.body).fontFamily;
+    ctx.fillText(`Node ${i}`, n.x + 14, n.y + 27);
+
+    // CPU block with utilisation bar
+    ctx.fillStyle = '#e8eeea'; roundRect(n.cpu.x, n.cpu.y, n.cpu.w, n.cpu.h, 6); ctx.fill();
+    ctx.fillStyle = INK; ctx.font = '600 13px ' + getComputedStyle(document.body).fontFamily;
+    ctx.fillText('Worker threads', n.cpu.x + 10, n.cpu.y + 20);
+    const u = m ? m.util[i] : 0, queue = m ? last.live.queueLen[i] : 0;
+    ctx.fillStyle = '#cdd8d1'; roundRect(n.cpu.x + 10, n.cpu.y + 30, n.cpu.w - 20, 8, 4); ctx.fill();
+    ctx.fillStyle = u > 0.8 ? RED : u > 0.55 ? AMBER : TEAL;
+    roundRect(n.cpu.x + 10, n.cpu.y + 30, Math.max(8, (n.cpu.w - 20) * u), 8, 4); ctx.fill();
+    ctx.fillStyle = INK; ctx.font = '400 12px ' + getComputedStyle(document.body).fontFamily;
+    ctx.fillText(`${Math.round(u * 100)}% busy, ${queue} waiting`, n.cpu.x + 10, n.cpu.y + 56);
+
+    // Memory block
+    ctx.fillStyle = '#e2efec'; ctx.strokeStyle = TEAL; ctx.lineWidth = 1.5;
+    roundRect(n.mem.x, n.mem.y, n.mem.w, n.mem.h, 6); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = INK; ctx.font = '600 13px ' + getComputedStyle(document.body).fontFamily;
+    ctx.fillText('Local memory', n.mem.x + 10, n.mem.y + 20);
+    ctx.font = '400 12px ' + getComputedStyle(document.body).fontFamily;
+    ctx.fillText(DEPT_LABEL[i], n.mem.x + 10, n.mem.y + 38);
+  });
+
+  // particles
+  const now = performance.now();
+  hero.particles = hero.particles.filter((p) => now < p.t0 + p.dur);
+  if (!reduceMotion) {
+    hero.particles.forEach((p) => {
+      const k = (now - p.t0) / p.dur; if (k < 0) return;
+      const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+      const x = p.x0 + (p.x1 - p.x0) * e, y = p.y0 + (p.y1 - p.y0) * e;
+      ctx.fillStyle = p.remote ? RED : TEAL;
+      ctx.globalAlpha = 0.85 * (1 - Math.max(0, k - 0.8) * 5);
+      ctx.beginPath(); ctx.arc(x, y, p.critical ? 6 : 3.5, 0, Math.PI * 2); ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+  }
+  requestAnimationFrame(drawHero);
+}
+requestAnimationFrame(drawHero);
+
+/* ---------------- rendering metrics ---------------- */
+function render(d) {
+  last = d;
+  $('offline').style.display = 'none';
+  setModeUI(d.mode);
+  const m = d.live;
+
+  $('kLat').innerHTML = unitHTML(fmtMs(m.avgLatencyMs), 'ms');
+  $('kP95').innerHTML = unitHTML(fmtMs(m.p95Ms), 'ms');
+  $('kLocal').innerHTML = unitHTML(Math.round(m.localPct), '%');
+  $('kTput').innerHTML = unitHTML(Math.round(m.throughput), '/s');
+  $('kTriage').innerHTML = unitHTML(fmtMs(m.triageDelayMs), 'ms');
+  $('kLocal').style.color = m.localPct >= 75 ? TEAL : m.localPct > 0 ? RED : INK;
+
+  if (m.localPct > 0) {
+    $('status').innerHTML = d.mode === 'broken'
+      ? `<strong>Broken mode.</strong> Queries go to any node, so ${Math.round(m.remotePct)}% of memory reads cross the interconnect and ER and ICU queries wait ${fmtMs(m.triageDelayMs)} ms on average.`
+      : `<strong>Fixed mode.</strong> Each query runs on the node that owns its data: ${Math.round(m.localPct)}% of reads are local and ER and ICU queries wait ${fmtMs(m.triageDelayMs)} ms.`;
+  }
+  if (d.dropped > 0) $('status').innerHTML += ` <span style="color:${RED}">${d.dropped} queries dropped because a queue was full.</span>`;
+
+  // sync sliders if config changed elsewhere
+  if (document.activeElement !== $('rate')) { $('rate').value = d.cfg.rate; $('rateOut').textContent = `${d.cfg.rate} / s`; }
+  if (document.activeElement !== $('remote')) { $('remote').value = d.cfg.remoteNs; $('remoteOut').textContent = `${d.cfg.remoteNs} ns (${(d.cfg.remoteNs / d.cfg.localNs).toFixed(1)}x)`; }
+  if (document.activeElement !== $('prio')) $('prio').checked = d.cfg.priority;
+
+  // timeline
+  seriesModes = d.series.map((p) => p.mode);
+  timeline.data.labels = d.series.map((p) => p.t);
+  timeline.data.datasets[0].data = d.series.map((p) => +p.avg.toFixed(3));
+  timeline.data.datasets[1].data = d.series.map((p) => +p.p95.toFixed(3));
+  timeline.data.datasets[2].data = d.series.map((p) => +p.triage.toFixed(3));
+  timeline.update('none');
+
+  if (d.events.length) spawn(d.events);
+}
+
+async function poll() {
+  try { render(await api('/api/metrics')); }
+  catch (e) { $('offline').style.display = 'block'; }
+}
+async function pollCompare() {
+  try {
+    const c = await api('/api/compare');
+    compare.data.datasets[0].data = [c.broken.avgLatencyMs, c.broken.p95Ms, c.broken.triageDelayMs].map((v) => +v.toFixed(3));
+    compare.data.datasets[1].data = [c.fixed.avgLatencyMs, c.fixed.p95Ms, c.fixed.triageDelayMs].map((v) => +v.toFixed(3));
+    compare.update('none');
+    if (c.comparison && c.broken.count > 200 && c.fixed.count > 200) {
+      $('cmpSub').textContent = `Averages since reset. Broken mode is ${Math.round(c.comparison.slowdownPct)}% slower; the fix cuts latency by ${Math.round(c.comparison.improvementPct)}%.`;
+    } else {
+      $('cmpSub').textContent = 'Spend some time in each mode to fill this in.';
+    }
+  } catch (e) { /* offline banner is handled by poll() */ }
+}
+setInterval(poll, 500); setInterval(pollCompare, 1500); poll(); pollCompare();
+
+/* ---------------- benchmark ---------------- */
+$('bench').onclick = async () => {
+  const btn = $('bench'); btn.disabled = true; $('benchNote').textContent = 'Running 6 simulations…';
+  try {
+    const r = await api('/api/benchmark?seconds=60&runs=3');
+    const b = r.broken, f = r.fixed;
+    const rows = [
+      ['Average latency', b.avgLatencyMs, f.avgLatencyMs, (v) => fmtMs(v) + ' ms', true],
+      ['p95 latency', b.p95Ms, f.p95Ms, (v) => fmtMs(v) + ' ms', true],
+      ['Triage queue delay', b.triageDelayMs, f.triageDelayMs, (v) => fmtMs(v) + ' ms', true],
+      ['Local access', b.localPct, f.localPct, (v) => v.toFixed(1) + '%', false],
+      ['Throughput', b.throughput, f.throughput, (v) => Math.round(v) + ' /s', false],
+    ];
+    const tb = $('benchTable').querySelector('tbody'); tb.innerHTML = '';
+    rows.forEach(([name, bv, fv, fmt, lowerBetter]) => {
+      const ch = bv ? ((fv - bv) / bv) * 100 : 0;
+      const tr = document.createElement('tr');
+      const sign = ch > 0 ? '+' : '';
+      tr.innerHTML = `<td>${name}</td><td>${fmt(bv)}</td><td>${fmt(fv)}</td><td class="${(lowerBetter ? ch < -1 : ch > 1) ? 'good' : ''}">${sign}${ch.toFixed(0)}%</td>`;
+      tb.appendChild(tr);
+    });
+    $('benchTable').hidden = false;
+    const c = r.comparison;
+    $('benchFoot').hidden = false;
+    $('benchFoot').textContent = `Slowdown of Broken vs Fixed: ${c.slowdownPct.toFixed(0)}%. Improvement from the fix: ${c.improvementPct.toFixed(0)}%. For reference, the pure per-access model gives ${r.analytic.brokenNsPerAccess.toFixed(0)} ns (Broken) vs ${r.analytic.fixedNsPerAccess.toFixed(0)} ns (Fixed) per access; the larger gap in latency comes from queueing, because slower queries keep workers busy longer.`;
+    $('benchNote').textContent = `${r.params.runs} runs x ${r.params.seconds} s at ${r.params.rate} queries/s.`;
+  } catch (e) { $('benchNote').textContent = 'The benchmark failed. Is the server still running?'; }
+  btn.disabled = false;
+};
+</script>
+</body>
+</html>

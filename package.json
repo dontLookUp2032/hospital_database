@@ -1,0 +1,12 @@
+{
+  "name": "numa-bottleneck-simulator",
+  "version": "1.0.0",
+  "description": "Simulates a NUMA memory-locality bottleneck in a hospital database and the fix",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
