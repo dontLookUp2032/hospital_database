@@ -187,7 +187,13 @@ const $ = (id) => document.getElementById(id);
 const RED = '#d5432f', TEAL = '#0e7c7b', AMBER = '#b97d00', INK = '#14232e', GREY = '#7d8b92';
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-async function api(path, opts) { const r = await fetch(path, opts); if (!r.ok) throw new Error(r.status); return r.json(); }
+const API_BASE = 'https://YOUR-BACKEND.onrender.com';
+
+async function api(path, opts) {
+  const r = await fetch(`${API_BASE}${path}`, opts);
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
 const post = (path, body) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
 
 const fmtMs = (v) => (v < 10 ? v.toFixed(2) : v < 100 ? v.toFixed(1) : Math.round(v).toString());
