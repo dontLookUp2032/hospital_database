@@ -187,7 +187,7 @@ const $ = (id) => document.getElementById(id);
 const RED = '#d5432f', TEAL = '#0e7c7b', AMBER = '#b97d00', INK = '#14232e', GREY = '#7d8b92';
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-const API_BASE = 'https://YOUR-BACKEND.onrender.com';
+const API_BASE = 'https://hospital-database-9rqs.onrender.com';
 
 async function api(path, opts) {
   const r = await fetch(`${API_BASE}${path}`, opts);
